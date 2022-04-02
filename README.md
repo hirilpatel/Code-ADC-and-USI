@@ -1,1 +1,101 @@
-# Code-ADC-and-USI
+#include <msp430.h>
+    volatile unsigned int i;
+    volatile unsigned int s;
+int main(void)
+{
+
+  WDTCTL = WDTPW + WDTHOLD;                 // Stop watchdog timer
+
+  BCSCTL1 = CALBC1_16MHZ;
+  DCOCTL=CALDCO_16MHZ;
+
+  //SMCLK on Pin6 (P1.4) - just for service and testing
+  P1DIR |= 0x10;   //P1.4 as output
+  P1SEL = 0x10;    //SMCLK to P1.4
+
+  //I/O-Pin preparation
+  P1DIR |= BIT0; //set P1.0 to output direction - for using the LED on Pin2
+  P1DIR |= BIT7; //set P1.7 to output direction - as signal for data are ready to use
+
+  //SPI settings
+
+  USICTL0 &= ~USISWRST; //USI released for operation
+  USICTL1 &= ~USII2C; //switch USI to SPI-Mode
+  USICTL0 |= USIMST; //set to SPI-Master-Mode
+
+  USICKCTL = USIDIV_3+USISSEL_2+USICKPL;
+  USICTL0 |= USIPE6 + USIPE5; //SDO-Port enabled; Pin8
+  USICTL0 |= USIPE7; //SDI-Port disabled; Pin9 can be used for normal in/out
+  USICTL0 |= USIOE; //activate output (data goes from MSP to Warrior56)
+  USICNT |= USI16B; //init load counter for 16-bit-data
+  //inactive state is low
+  //data is changed on the first SCLK edge and captured on the following edge
+
+  P1DIR |= 0x01;                            // Set P1.0 to output direction
+  SD16CTL = SD16REFON + SD16SSEL_1;         // 1.2V ref, SMCLK
+  SD16INCTL0 = SD16INCH_1;                  // A1+/-
+  SD16CCTL0 =  SD16UNI + SD16IE;            // 256OSR, unipolar, interrupt enable
+  SD16AE = SD16AE1;                         // P1.1 A1+, A1- = VSS
+  SD16CCTL0 |= SD16SC;                      // Set bit to start conversion
+
+
+
+    while(1)
+    {
+    SD16CCTL0 |= SD16SC;
+ s = SD16MEM0;
+ 
+    for (i = 0xFFFF; i > 0; i--);           // Delay
+    USICTL1 |= USIIFG;                 // Set flag and start communication
+    USISR = s;
+
+    if (USISRL = s)
+      P1OUT |= 0x01;
+    else
+      P1OUT &= ~0x01;
+    __bis_SR_register(LPM0_bits + GIE);
+
+    }
+}
+#pragma vector = SD16_VECTOR; // Interrupt service routine for
+__interrupt void SD16ISR(void) // conversion
+{
+
+    s = SD16MEM0;
+
+}
+
+
+//////////////////////////////////////////////////
+Here is arduino code  as slave
+#include <SPI.h>
+char buff [50];
+volatile byte indx;
+volatile boolean process;
+
+void setup (void) {
+   Serial.begin (115200);
+   pinMode(MOSI, INPUT); // have to send on master in so it set as output
+   SPCR |= _BV(SPE); // turn on SPI in slave mode
+   indx = 0; // buffer empty
+   process = false;
+   SPI.attachInterrupt(); // turn on interrupt
+}
+
+ISR (SPI_STC_vect) // SPI interrupt routine 
+{ 
+   byte c = SPDR; // read byte from SPI Data Register
+   if (indx < sizeof buff) {
+      buff [indx++] = c; // save data in the next index in the array buff
+      if (c == '\r') //check for the end of the word
+      process = true;
+   }
+}
+
+void loop (void) {
+   if (process) {
+      process = false; //reset the process
+      Serial.println (buff); //print the array on serial monitor
+      indx= 0; //reset button to zero
+   }
+}
